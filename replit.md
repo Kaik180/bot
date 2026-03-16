@@ -91,6 +91,15 @@ Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used b
 
 Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
 
+### `artifacts/discord-bot` (`@workspace/discord-bot`)
+
+Bot de Discord construido con discord.js v14. Responde al comando `!hola` con `¡Hola mundo!`.
+
+- Entry: `index.js` — conecta el bot usando `DISCORD_TOKEN` del entorno
+- Requiere secret: `DISCORD_TOKEN`
+- `pnpm --filter @workspace/discord-bot run dev` — inicia el bot con recarga automática
+- `pnpm --filter @workspace/discord-bot run start` — inicia el bot en producción
+
 ### `scripts` (`@workspace/scripts`)
 
 Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
