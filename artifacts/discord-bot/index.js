@@ -321,31 +321,6 @@ async function ejecutarAccionPropia(interaction, accion) {
   const articulo = ARTICULOS[accion];
   const botMember = guild.members.me;
 
-  // ── Auto-muteo 5 min ──────────────────────────────────────────────────────
-  if (accion === 'comprar_muteo') {
-    if (esInmune(member)) {
-      await interaction.reply({ content: '🛡️ Tienes el rol **Inmune**, ¡el muteo no te afecta!', ephemeral: true });
-      return;
-    }
-    const check = puedeModerar(botMember, member);
-    if (!check.ok) { await interaction.reply({ content: `⚠️ ${check.razon}`, ephemeral: true }); return; }
-
-    const res = gastarPuntos(user.id, articulo.coste);
-    if (!res.ok) {
-      await interaction.reply({ content: `❌ No tienes suficientes puntos. Necesitas **${articulo.coste}** y tienes **${res.saldo}**.`, ephemeral: true });
-      return;
-    }
-    try {
-      await member.timeout(5 * 60 * 1000, 'Auto-muteo comprado en la tienda');
-      await interaction.reply({ content: `🔇 **${user}** se ha muteado **5 minutos**. (-${articulo.coste} pts | Saldo: ${res.saldo} pts)` });
-      await registrarCompra(guild, user, articulo.label, articulo.coste);
-    } catch {
-      darPuntos(user.id, articulo.coste);
-      await interaction.reply({ content: '⚠️ No tengo permisos para aplicar el timeout.', ephemeral: true });
-    }
-    return;
-  }
-
   // ── Rol VIP 1 hora ────────────────────────────────────────────────────────
   if (accion === 'comprar_vip') {
     const res = gastarPuntos(user.id, articulo.coste);
@@ -399,6 +374,20 @@ async function ejecutarAccionPropia(interaction, accion) {
 async function ejecutarAccionSobreObjetivo(interaction, accion, objetivo, saldoRestante) {
   const { user, guild } = interaction;
   const articulo = ARTICULOS[accion];
+
+  // ── Muteo Chat 5 min ──────────────────────────────────────────────────────
+  if (accion === 'comprar_muteo') {
+    try {
+      await objetivo.timeout(5 * 60 * 1000, `Muteo de broma comprado por ${user.tag} en la tienda`);
+      await interaction.reply({
+        content: `🔇 **${objetivo.user}** ha sido muteado en el chat durante **5 minutos** por **${user}**. (-${articulo.coste} pts | Saldo: ${saldoRestante} pts)`,
+      });
+      return true;
+    } catch {
+      await interaction.reply({ content: '⚠️ No tengo permisos para aplicar el timeout a ese usuario.', ephemeral: true });
+      return false;
+    }
+  }
 
   // ── Muteo Chat 10 min ─────────────────────────────────────────────────────
   if (accion === 'comprar_timeout10') {

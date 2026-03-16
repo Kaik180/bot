@@ -10,12 +10,12 @@ import {
 // necesitaObjetivo: false → se aplica al propio comprador (ejecuta directo)
 export const ARTICULOS = {
   comprar_muteo: {
-    label: 'Auto-muteo 5 min',
+    label: 'Muteo 5 min',
     emoji: '🔇',
     coste: 500,
-    descripcion: 'Te muteas a ti mismo durante 5 minutos',
+    descripcion: 'Mutea en el chat a la víctima que elijas durante 5 minutos',
     style: ButtonStyle.Primary,
-    necesitaObjetivo: false,
+    necesitaObjetivo: true,
   },
   comprar_timeout10: {
     label: 'Muteo Chat 10 min',
