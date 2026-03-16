@@ -375,16 +375,35 @@ async function ejecutarAccionSobreObjetivo(interaction, accion, objetivo, saldoR
   const { user, guild } = interaction;
   const articulo = ARTICULOS[accion];
 
-  // ── Muteo Chat 5 min ──────────────────────────────────────────────────────
+  // ── Muteo Chat + Voz 5 min ────────────────────────────────────────────────
   if (accion === 'comprar_muteo') {
     try {
-      await objetivo.timeout(5 * 60 * 1000, `Muteo de broma comprado por ${user.tag} en la tienda`);
+      const promesas = [
+        objetivo.timeout(5 * 60 * 1000, `Muteo comprado por ${user.tag} en la tienda`),
+      ];
+
+      // Si el objetivo está en un canal de voz, silenciarlo también allí
+      const enVoz = !!objetivo.voice?.channel;
+      if (enVoz) {
+        promesas.push(objetivo.voice.setMute(true, `Muteo de voz comprado por ${user.tag}`));
+      }
+
+      await Promise.all(promesas);
+
       await interaction.reply({
-        content: `🔇 **${objetivo.user}** ha sido muteado en el chat durante **5 minutos** por **${user}**. (-${articulo.coste} pts | Saldo: ${saldoRestante} pts)`,
+        content: `🔇 **${objetivo.user}** ha sido muteado **5 minutos** por **${user}**${enVoz ? ' (chat y canal de voz)' : ' (chat)'}. (-${articulo.coste} pts | Saldo: ${saldoRestante} pts)`,
       });
+
+      // Quitar el mute de voz pasados 5 min (el timeout de chat expira solo)
+      if (enVoz) {
+        setTimeout(async () => {
+          await objetivo.voice.setMute(false).catch(() => {});
+        }, 5 * 60 * 1000);
+      }
+
       return true;
     } catch {
-      await interaction.reply({ content: '⚠️ No tengo permisos para aplicar el timeout a ese usuario.', ephemeral: true });
+      await interaction.reply({ content: '⚠️ No tengo permisos para mutear a ese usuario.', ephemeral: true });
       return false;
     }
   }

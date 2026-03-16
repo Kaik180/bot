@@ -13,7 +13,7 @@ export const ARTICULOS = {
     label: 'Muteo 5 min',
     emoji: '🔇',
     coste: 500,
-    descripcion: 'Mutea en el chat a la víctima que elijas durante 5 minutos',
+    descripcion: 'Mutea en el chat y en el canal de voz a la víctima durante 5 minutos',
     style: ButtonStyle.Primary,
     necesitaObjetivo: true,
   },
