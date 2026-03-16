@@ -1,7 +1,19 @@
-// ─── Utilidades de moderación ─────────────────────────────────────────────────
+import { tieneEscudo } from './estado.js';
 
-// Verifica si el bot puede moderar al miembro objetivo
-// Devuelve { ok: true } o { ok: false, razon: string }
+// ─── Comprobación unificada de protección ─────────────────────────────────────
+// Cubre tanto el rol "Inmune" (comprar_inmunidad) como el escudo de disco (escudo_personal)
+export function estaProtegido(miembro) {
+  return (
+    miembro.roles.cache.some((r) => r.name === 'Inmune') ||
+    tieneEscudo(miembro.id)
+  );
+}
+
+// Mantiene el nombre anterior como alias por compatibilidad
+export const esInmune = estaProtegido;
+
+// ─── Verificación de jerarquía de roles ──────────────────────────────────────
+
 export function puedeModerar(botMember, objetivo) {
   if (!objetivo) return { ok: false, razon: 'No se encontró al miembro.' };
   if (objetivo.id === botMember.id) return { ok: false, razon: 'No puedo moderarme a mí mismo.' };
@@ -13,18 +25,14 @@ export function puedeModerar(botMember, objetivo) {
   if (rolMaxObjetivo.position >= rolMaxBot.position) {
     return {
       ok: false,
-      razon: `El rol de ${objetivo} (${rolMaxObjetivo.name}) es igual o superior al mío. No puedo moderarlo.`,
+      razon: `El rol de ${objetivo} (${rolMaxObjetivo.name}) es igual o superior al mío.`,
     };
   }
   return { ok: true };
 }
 
-// Verifica si un miembro tiene el rol "Inmune"
-export function esInmune(miembro) {
-  return miembro.roles.cache.some((r) => r.name === 'Inmune');
-}
+// ─── Roles ────────────────────────────────────────────────────────────────────
 
-// Busca o crea un rol por nombre en el servidor
 export async function buscarOCrearRol(guild, nombre, opciones = {}) {
   let rol = guild.roles.cache.find((r) => r.name === nombre);
   if (!rol) {
@@ -37,12 +45,10 @@ export async function buscarOCrearRol(guild, nombre, opciones = {}) {
   return rol;
 }
 
-// Busca o crea el canal #logs-tienda
-export async function obtenerCanalLogs(guild) {
-  let canal = guild.channels.cache.find(
-    (c) => c.name === 'logs-tienda' && c.isTextBased(),
-  );
+// ─── Canal de logs ────────────────────────────────────────────────────────────
 
+export async function obtenerCanalLogs(guild) {
+  let canal = guild.channels.cache.find((c) => c.name === 'logs-tienda' && c.isTextBased());
   if (!canal) {
     try {
       canal = await guild.channels.create({
@@ -50,13 +56,12 @@ export async function obtenerCanalLogs(guild) {
         reason: 'Canal de registros de la tienda del servidor',
       });
     } catch {
-      return null; // Sin permisos para crear canales
+      return null;
     }
   }
   return canal;
 }
 
-// Envía un log al canal #logs-tienda
 export async function registrarCompra(guild, usuario, accion, coste) {
   const canal = await obtenerCanalLogs(guild);
   if (!canal) return;

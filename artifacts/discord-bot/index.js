@@ -6,6 +6,9 @@ import {
   SlashCommandBuilder,
   ActionRowBuilder,
   StringSelectMenuBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
   PermissionFlagsBits,
 } from 'discord.js';
 
@@ -23,6 +26,7 @@ import {
   buildEmbedTienda,
   buildBotonesTienda,
   buildSelectorVictima,
+  nicknameAleatorio,
   ARTICULOS,
 } from './tienda.js';
 
@@ -33,6 +37,20 @@ import {
   registrarCompra,
 } from './moderacion.js';
 
+import {
+  activarEscudo,
+  tieneEscudo,
+  msEscudoRestante,
+  activarSeguro,
+  tieneSeguro,
+  registrarAtaque,
+  obtenerHistorialAtaques,
+  comprarTicket,
+  obtenerPozo,
+  obtenerTicketsUsuario,
+  realizarSorteo,
+} from './estado.js';
+
 // ─── Validación del token ─────────────────────────────────────────────────────
 
 const token = process.env.DISCORD_TOKEN;
@@ -40,6 +58,10 @@ if (!token) {
   console.error('Error: la variable de entorno DISCORD_TOKEN no está definida.');
   process.exit(1);
 }
+
+// ─── Duelos pendientes (en memoria) ──────────────────────────────────────────
+// Clave: `${retadorId}:${objetivoId}` → { apuesta, timestamp }
+const duelosPendientes = new Map();
 
 // ─── Comandos slash ───────────────────────────────────────────────────────────
 
@@ -57,6 +79,41 @@ const commands = [
   new SlashCommandBuilder()
     .setName('avisos')
     .setDescription('Muestra cuántos avisos tienes registrados')
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('estado')
+    .setDescription('Muestra tus defensas activas (escudo, seguro)')
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('duelo')
+    .setDescription('Reta a otro usuario por una apuesta de puntos')
+    .addUserOption((o) =>
+      o.setName('usuario').setDescription('Usuario al que retas').setRequired(true),
+    )
+    .addIntegerOption((o) =>
+      o.setName('apuesta').setDescription('Puntos que cada jugador pone en juego').setMinValue(50).setRequired(true),
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('loteria-comprar')
+    .setDescription('Compra un ticket de lotería (100 puntos cada uno)')
+    .addIntegerOption((o) =>
+      o.setName('cantidad').setDescription('Número de tickets a comprar').setMinValue(1).setMaxValue(20),
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('loteria-pozo')
+    .setDescription('Muestra el pozo actual de la lotería y tus tickets')
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('loteria-sorteo')
+    .setDescription('(Admin) Realiza el sorteo de la lotería ahora')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),
 
   new SlashCommandBuilder()
@@ -112,6 +169,7 @@ const client = new Client({
 client.once('clientReady', async (c) => {
   console.log(`Bot conectado como ${c.user.tag}`);
   await registrarComandos(c.user.id);
+  iniciarSorteoAutomatico();
 });
 
 // ─── Mensajes de texto ────────────────────────────────────────────────────────
@@ -125,7 +183,7 @@ client.on('messageCreate', (msg) => {
 
 client.on('interactionCreate', async (interaction) => {
   try {
-    if (interaction.isChatInputCommand())  await manejarSlash(interaction);
+    if (interaction.isChatInputCommand())      await manejarSlash(interaction);
     else if (interaction.isStringSelectMenu()) await manejarStringSelect(interaction);
     else if (interaction.isUserSelectMenu())   await manejarSelectorVictima(interaction);
     else if (interaction.isButton())           await manejarBoton(interaction);
@@ -140,8 +198,9 @@ client.on('interactionCreate', async (interaction) => {
 // ─── Comandos slash ───────────────────────────────────────────────────────────
 
 async function manejarSlash(interaction) {
-  const { commandName } = interaction;
+  const { commandName, user } = interaction;
 
+  // /menu
   if (commandName === 'menu') {
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId('menu_principal')
@@ -157,21 +216,135 @@ async function manejarSlash(interaction) {
     return;
   }
 
+  // /puntos
   if (commandName === 'puntos') {
-    const pts = obtenerPuntos(interaction.user.id);
-    await interaction.reply({ content: `💰 Tienes **${pts} puntos** del servidor.`, ephemeral: true });
-    return;
-  }
-
-  if (commandName === 'avisos') {
-    const avisos = obtenerAvisos(interaction.user.id);
     await interaction.reply({
-      content: `⚠️ Tienes **${avisos} aviso${avisos !== 1 ? 's' : ''}** registrados.`,
+      content: `💰 Tienes **${obtenerPuntos(user.id)} puntos** del servidor.`,
       ephemeral: true,
     });
     return;
   }
 
+  // /avisos
+  if (commandName === 'avisos') {
+    const n = obtenerAvisos(user.id);
+    await interaction.reply({
+      content: `⚠️ Tienes **${n} aviso${n !== 1 ? 's' : ''}** registrados.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // /estado
+  if (commandName === 'estado') {
+    const escudo = tieneEscudo(user.id);
+    const seguro = tieneSeguro(user.id);
+    const msRestante = msEscudoRestante(user.id);
+    const minRestantes = Math.ceil(msRestante / 60000);
+
+    const lineas = [
+      `🔰 **Escudo:** ${escudo ? `✅ Activo (~${minRestantes} min restantes)` : '❌ Inactivo'}`,
+      `🪂 **Seguro de Desempleo:** ${seguro ? '✅ Activo' : '❌ Inactivo'}`,
+      `💰 **Puntos:** ${obtenerPuntos(user.id)}`,
+      `🎟️ **Tickets de lotería:** ${obtenerTicketsUsuario(user.id)}`,
+    ];
+
+    await interaction.reply({ content: lineas.join('\n'), ephemeral: true });
+    return;
+  }
+
+  // /duelo
+  if (commandName === 'duelo') {
+    const objetivo = interaction.options.getUser('usuario');
+    const apuesta  = interaction.options.getInteger('apuesta');
+
+    if (objetivo.id === user.id) {
+      await interaction.reply({ content: '❌ No puedes retarte a ti mismo.', ephemeral: true });
+      return;
+    }
+    if (objetivo.bot) {
+      await interaction.reply({ content: '❌ No puedes retar a un bot.', ephemeral: true });
+      return;
+    }
+    if (!tienePuntos(user.id, apuesta)) {
+      await interaction.reply({
+        content: `❌ Necesitas **${apuesta} puntos** para apostar y solo tienes **${obtenerPuntos(user.id)}**.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const claveduelo = `${user.id}:${objetivo.id}`;
+    if (duelosPendientes.has(claveduelo)) {
+      await interaction.reply({ content: '⚠️ Ya tienes un duelo pendiente contra ese usuario.', ephemeral: true });
+      return;
+    }
+
+    const btnAceptar = new ButtonBuilder()
+      .setCustomId(`duelo_aceptar:${user.id}:${objetivo.id}:${apuesta}`)
+      .setLabel('⚔️ Aceptar duelo')
+      .setStyle(ButtonStyle.Success);
+
+    const btnRechazar = new ButtonBuilder()
+      .setCustomId(`duelo_rechazar:${user.id}:${objetivo.id}:${apuesta}`)
+      .setLabel('🏳️ Rechazar')
+      .setStyle(ButtonStyle.Danger);
+
+    duelosPendientes.set(claveduelo, { apuesta, timestamp: Date.now() });
+
+    // Expirar el duelo en 5 minutos si no se acepta
+    setTimeout(() => duelosPendientes.delete(claveduelo), 5 * 60 * 1000);
+
+    await interaction.reply({
+      content: `⚔️ **${user}** reta a **${objetivo}** a un duelo por **${apuesta} puntos** cada uno.\n${objetivo}, ¿aceptas el reto?`,
+      components: [new ActionRowBuilder().addComponents(btnAceptar, btnRechazar)],
+    });
+    return;
+  }
+
+  // /loteria-comprar
+  if (commandName === 'loteria-comprar') {
+    const cantidad = interaction.options.getInteger('cantidad') ?? 1;
+    const costeTotal = cantidad * 100;
+
+    if (!tienePuntos(user.id, costeTotal)) {
+      await interaction.reply({
+        content: `❌ Necesitas **${costeTotal} puntos** para ${cantidad} ticket(s) y solo tienes **${obtenerPuntos(user.id)}**.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const res = gastarPuntos(user.id, costeTotal);
+    let info = null;
+    for (let i = 0; i < cantidad; i++) info = comprarTicket(user.id);
+
+    await interaction.reply({
+      content: `🎟️ Compraste **${cantidad} ticket(s)** por **${costeTotal} puntos**.\n` +
+               `Tienes **${info.misTickets} ticket(s)** en total. El pozo actual es de **${info.pozo} puntos**.\n` +
+               `Saldo restante: **${res.saldo} puntos**.`,
+    });
+    return;
+  }
+
+  // /loteria-pozo
+  if (commandName === 'loteria-pozo') {
+    const pozo = obtenerPozo();
+    const misTickets = obtenerTicketsUsuario(user.id);
+    await interaction.reply({
+      content: `🏆 El pozo de la lotería acumula **${pozo} puntos**.\nTienes **${misTickets} ticket(s)** comprados.`,
+    });
+    return;
+  }
+
+  // /loteria-sorteo (admin)
+  if (commandName === 'loteria-sorteo') {
+    await ejecutarSorteo(interaction.guild, interaction.channel);
+    await interaction.reply({ content: '🎰 Sorteo ejecutado. Revisa el canal de logs.', ephemeral: true });
+    return;
+  }
+
+  // /dar-puntos
   if (commandName === 'dar-puntos') {
     const objetivo = interaction.options.getUser('usuario');
     const cantidad = interaction.options.getInteger('cantidad');
@@ -180,6 +353,7 @@ async function manejarSlash(interaction) {
     return;
   }
 
+  // /quitar-puntos
   if (commandName === 'quitar-puntos') {
     const objetivo = interaction.options.getUser('usuario');
     const cantidad = interaction.options.getInteger('cantidad');
@@ -196,7 +370,7 @@ async function manejarStringSelect(interaction) {
   const sel = interaction.values[0];
 
   if (sel === 'menu_juegos') {
-    await interaction.reply({ content: '🚧 Este menú está en construcción. ¡Vuelve pronto!', ephemeral: true });
+    await interaction.reply({ content: '🚧 En construcción. ¡Vuelve pronto!', ephemeral: true });
     return;
   }
   if (sel === 'menu_tienda') {
@@ -204,14 +378,21 @@ async function manejarStringSelect(interaction) {
   }
 }
 
-// ─── Botones de la tienda ─────────────────────────────────────────────────────
+// ─── Botones ──────────────────────────────────────────────────────────────────
 
 async function manejarBoton(interaction) {
   const { customId, user } = interaction;
+
+  // ── Botones de duelo ───────────────────────────────────────────────────────
+  if (customId.startsWith('duelo_')) {
+    await manejarBotonDuelo(interaction);
+    return;
+  }
+
+  // ── Botones de la tienda ───────────────────────────────────────────────────
   const articulo = ARTICULOS[customId];
   if (!articulo) return;
 
-  // Verificar que el comprador tiene suficientes puntos (sin descontar aún)
   if (!tienePuntos(user.id, articulo.coste)) {
     await interaction.reply({
       content: `❌ No tienes suficientes puntos. Necesitas **${articulo.coste}** y tienes **${obtenerPuntos(user.id)}**.`,
@@ -220,57 +401,113 @@ async function manejarBoton(interaction) {
     return;
   }
 
-  // Si el artículo necesita elegir víctima → mostrar UserSelectMenu
   if (articulo.necesitaObjetivo) {
     await interaction.reply(buildSelectorVictima(customId, user.id));
     return;
   }
 
-  // Si es de auto-aplicación → ejecutar directamente
   await ejecutarAccionPropia(interaction, customId);
+}
+
+// ─── Botones de duelo ─────────────────────────────────────────────────────────
+
+async function manejarBotonDuelo(interaction) {
+  const partes  = interaction.customId.split(':');
+  const accion   = partes[0]; // duelo_aceptar / duelo_rechazar
+  const retadorId  = partes[1];
+  const objetivoId = partes[2];
+  const apuesta    = parseInt(partes[3]);
+
+  // Solo el retado puede responder
+  if (interaction.user.id !== objetivoId) {
+    await interaction.reply({ content: '🔒 Solo el usuario retado puede responder a este duelo.', ephemeral: true });
+    return;
+  }
+
+  const claveduelo = `${retadorId}:${objetivoId}`;
+
+  if (accion === 'duelo_rechazar') {
+    duelosPendientes.delete(claveduelo);
+    await interaction.reply({ content: `🏳️ **${interaction.user}** rechazó el duelo.` });
+    return;
+  }
+
+  if (accion === 'duelo_aceptar') {
+    duelosPendientes.delete(claveduelo);
+
+    // Verificar que ambos tienen los puntos
+    const retador  = await interaction.guild.members.fetch(retadorId).catch(() => null);
+    if (!retador) {
+      await interaction.reply({ content: '❌ El retador ya no está en el servidor.', ephemeral: true });
+      return;
+    }
+
+    if (!tienePuntos(retadorId, apuesta)) {
+      await interaction.reply({ content: `❌ **${retador.user.tag}** ya no tiene suficientes puntos para el duelo.` });
+      return;
+    }
+    if (!tienePuntos(objetivoId, apuesta)) {
+      await interaction.reply({ content: `❌ No tienes suficientes puntos para aceptar el duelo (necesitas **${apuesta}**).`, ephemeral: true });
+      return;
+    }
+
+    // Descontar a ambos
+    gastarPuntos(retadorId, apuesta);
+    gastarPuntos(objetivoId, apuesta);
+
+    const pozo = apuesta * 2;
+    const ganadorId = Math.random() < 0.5 ? retadorId : objetivoId;
+    const ganadorMember = ganadorId === retadorId ? retador : interaction.member;
+
+    darPuntos(ganadorId, pozo);
+
+    const embed = new EmbedBuilder()
+      .setTitle('⚔️ ¡Resultado del Duelo!')
+      .setColor(0xf1c40f)
+      .setDescription(
+        `**${retador.user.tag}** vs **${interaction.user.tag}**\n\n` +
+        `🎲 El destino ha decidido... ¡**${ganadorMember.user.tag}** gana **${pozo} puntos**!`,
+      );
+
+    await interaction.reply({ embeds: [embed] });
+    return;
+  }
 }
 
 // ─── UserSelectMenu: selección de víctima ────────────────────────────────────
 
 async function manejarSelectorVictima(interaction) {
-  // customId tiene formato "victima:{accion}:{compradorId}"
   const partes = interaction.customId.split(':');
   if (partes[0] !== 'victima' || partes.length < 3) return;
 
   const accion      = partes[1];
   const compradorId = partes[2];
 
-  // ── Seguridad: solo el comprador puede usar este menú ─────────────────────
   if (interaction.user.id !== compradorId) {
-    await interaction.reply({
-      content: '🔒 Solo la persona que abrió este menú puede usarlo.',
-      ephemeral: true,
-    });
+    await interaction.reply({ content: '🔒 Solo quien abrió este menú puede usarlo.', ephemeral: true });
     return;
   }
 
   const articulo = ARTICULOS[accion];
   if (!articulo) return;
 
-  // Obtener el miembro objetivo seleccionado
-  const objetivoId = interaction.values[0];
+  const objetivoId    = interaction.values[0];
   const objetivoMember = await interaction.guild.members.fetch(objetivoId).catch(() => null);
 
   if (!objetivoMember) {
-    await interaction.reply({ content: '❌ No se encontró al usuario seleccionado.', ephemeral: true });
+    await interaction.reply({ content: '❌ No se encontró al usuario.', ephemeral: true });
     return;
   }
-
-  // ── No permitir seleccionarse a uno mismo en acciones de víctima ──────────
   if (objetivoId === compradorId) {
     await interaction.reply({ content: '❌ No puedes seleccionarte a ti mismo como víctima.', ephemeral: true });
     return;
   }
 
-  // ── Verificar inmunidad del objetivo ──────────────────────────────────────
+  // ── Verificar protección del objetivo ─────────────────────────────────────
   if (esInmune(objetivoMember)) {
+    const tipoProteccion = tieneEscudo(objetivoMember.id) ? 'Escudo activo' : 'rol Inmune';
     await interaction.reply({
-      content: `🛡️ ¡No puedes tocar a **${objetivoMember.user.tag}**, es **Inmune**!`,
+      content: `🛡️ ¡**${objetivoMember.user.tag}** está protegido (${tipoProteccion})! No puedes atacarle ahora.`,
       ephemeral: true,
     });
     return;
@@ -278,7 +515,7 @@ async function manejarSelectorVictima(interaction) {
 
   // ── Verificar jerarquía de roles ──────────────────────────────────────────
   const botMember = interaction.guild.members.me;
-  const check = puedeModerar(botMember, objetivoMember);
+  const check     = puedeModerar(botMember, objetivoMember);
   if (!check.ok) {
     await interaction.reply({ content: `⚠️ ${check.razon}`, ephemeral: true });
     return;
@@ -294,18 +531,30 @@ async function manejarSelectorVictima(interaction) {
     return;
   }
 
-  // ── Ejecutar la acción sobre el objetivo ──────────────────────────────────
+  // ── Ejecutar la acción ────────────────────────────────────────────────────
   const exito = await ejecutarAccionSobreObjetivo(
     interaction, accion, objetivoMember, resultado.saldo,
   );
 
   if (!exito) {
-    // Devolver puntos si la acción falló
     darPuntos(compradorId, articulo.coste);
     return;
   }
 
-  // ── Registrar en #logs-tienda ─────────────────────────────────────────────
+  // ── Registrar historial de ataques ────────────────────────────────────────
+  registrarAtaque(objetivoId, interaction.user.tag, articulo.label);
+
+  // ── Reembolso del Seguro de Desempleo al objetivo ─────────────────────────
+  if (tieneSeguro(objetivoId)) {
+    const reembolso = Math.floor(articulo.coste * 0.5);
+    darPuntos(objetivoId, reembolso);
+    await objetivoMember.user
+      .send(`🪂 Tu **Seguro de Desempleo** se activó: has recibido **${reembolso} puntos** de reembolso tras el ataque de **${interaction.user.tag}**.`)
+      .catch(() => {});
+    console.log(`Seguro activado: ${reembolso} pts devueltos a ${objetivoMember.user.tag}`);
+  }
+
+  // ── Log en #logs-tienda ───────────────────────────────────────────────────
   await registrarCompra(
     interaction.guild,
     interaction.user,
@@ -314,93 +563,131 @@ async function manejarSelectorVictima(interaction) {
   );
 }
 
-// ─── Acciones de auto-aplicación (sin objetivo) ──────────────────────────────
+// ─── Acciones sobre uno mismo ─────────────────────────────────────────────────
 
 async function ejecutarAccionPropia(interaction, accion) {
   const { user, member, guild } = interaction;
-  const articulo = ARTICULOS[accion];
-  const botMember = guild.members.me;
+  const art = ARTICULOS[accion];
+
+  async function cobrarYEjecutar(fn) {
+    const res = gastarPuntos(user.id, art.coste);
+    if (!res.ok) {
+      await interaction.reply({
+        content: `❌ No tienes suficientes puntos. Necesitas **${art.coste}** y tienes **${res.saldo}**.`,
+        ephemeral: true,
+      });
+      return null;
+    }
+    return res;
+  }
 
   // ── Rol VIP 1 hora ────────────────────────────────────────────────────────
   if (accion === 'comprar_vip') {
-    const res = gastarPuntos(user.id, articulo.coste);
-    if (!res.ok) {
-      await interaction.reply({ content: `❌ No tienes suficientes puntos. Necesitas **${articulo.coste}** y tienes **${res.saldo}**.`, ephemeral: true });
-      return;
-    }
+    const res = await cobrarYEjecutar();
+    if (!res) return;
     try {
       const rolVip = await buscarOCrearRol(guild, 'VIP', { color: 0xf1c40f });
       await member.roles.add(rolVip);
-      await interaction.reply({ content: `👑 **${user}** ahora tiene el rol **VIP** durante 1 hora. (-${articulo.coste} pts | Saldo: ${res.saldo} pts)` });
-      await registrarCompra(guild, user, articulo.label, articulo.coste);
+      await interaction.reply({ content: `👑 **${user}** tiene el rol **VIP** durante 1 hora. (-${art.coste} pts | Saldo: ${res.saldo} pts)` });
+      await registrarCompra(guild, user, art.label, art.coste);
       setTimeout(async () => {
         await member.roles.remove(rolVip).catch(() => {});
         await user.send('⏰ Tu rol **VIP** ha expirado.').catch(() => {});
       }, 60 * 60 * 1000);
     } catch {
-      darPuntos(user.id, articulo.coste);
+      darPuntos(user.id, art.coste);
       await interaction.reply({ content: '⚠️ No tengo permisos para crear o asignar el rol VIP.', ephemeral: true });
     }
     return;
   }
 
-  // ── Inmunidad 24 horas ────────────────────────────────────────────────────
+  // ── Inmunidad 24h (via rol Discord) ──────────────────────────────────────
   if (accion === 'comprar_inmunidad') {
-    const res = gastarPuntos(user.id, articulo.coste);
-    if (!res.ok) {
-      await interaction.reply({ content: `❌ No tienes suficientes puntos. Necesitas **${articulo.coste}** y tienes **${res.saldo}**.`, ephemeral: true });
-      return;
-    }
+    const res = await cobrarYEjecutar();
+    if (!res) return;
     try {
       const rolInmune = await buscarOCrearRol(guild, 'Inmune', { color: 0x2ecc71 });
       await member.roles.add(rolInmune);
-      await interaction.reply({ content: `🛡️ **${user}** tiene el rol **Inmune** durante 24 horas. Nadie podrá mutearte con el bot. (-${articulo.coste} pts | Saldo: ${res.saldo} pts)` });
-      await registrarCompra(guild, user, articulo.label, articulo.coste);
+      await interaction.reply({ content: `🛡️ **${user}** tiene el rol **Inmune** durante 24 horas. (-${art.coste} pts | Saldo: ${res.saldo} pts)` });
+      await registrarCompra(guild, user, art.label, art.coste);
       setTimeout(async () => {
         await member.roles.remove(rolInmune).catch(() => {});
         await user.send('⏰ Tu rol **Inmune** ha expirado.').catch(() => {});
       }, 24 * 60 * 60 * 1000);
     } catch {
-      darPuntos(user.id, articulo.coste);
+      darPuntos(user.id, art.coste);
       await interaction.reply({ content: '⚠️ No tengo permisos para crear o asignar el rol Inmune.', ephemeral: true });
     }
     return;
   }
+
+  // ── Escudo personal 2h (persiste en disco) ────────────────────────────────
+  if (accion === 'escudo_personal') {
+    const res = await cobrarYEjecutar();
+    if (!res) return;
+    activarEscudo(user.id, 2 * 60 * 60 * 1000);
+    await interaction.reply({ content: `🔰 **${user}** ha activado el **Escudo** durante 2 horas. Ningún ataque de la tienda funcionará contra ti. (-${art.coste} pts | Saldo: ${res.saldo} pts)` });
+    await registrarCompra(guild, user, art.label, art.coste);
+    return;
+  }
+
+  // ── Seguro de Desempleo (pasivo permanente) ───────────────────────────────
+  if (accion === 'seguro_desempleo') {
+    if (tieneSeguro(user.id)) {
+      await interaction.reply({ content: '🪂 Ya tienes el **Seguro de Desempleo** activo.', ephemeral: true });
+      return;
+    }
+    const res = await cobrarYEjecutar();
+    if (!res) return;
+    activarSeguro(user.id);
+    await interaction.reply({ content: `🪂 **${user}** ha activado el **Seguro de Desempleo**. Si alguien te ataca, recibirás el 50% del coste del ataque en puntos. (-${art.coste} pts | Saldo: ${res.saldo} pts)` });
+    await registrarCompra(guild, user, art.label, art.coste);
+    return;
+  }
+
+  // ── Espionaje ─────────────────────────────────────────────────────────────
+  if (accion === 'espionaje') {
+    const res = await cobrarYEjecutar();
+    if (!res) return;
+    const historial = obtenerHistorialAtaques(user.id);
+    let informe;
+    if (historial.length === 0) {
+      informe = 'No hay registros de ataques contra ti aún.';
+    } else {
+      informe = historial
+        .map((h, i) => `${i + 1}. **${h.atacanteTag}** — ${h.accion} (${h.fecha})`)
+        .join('\n');
+    }
+    try {
+      await user.send(`🕵️ **Informe de Espionaje:**\nÚltimos ataques que has recibido:\n${informe}`);
+      await interaction.reply({ content: `🕵️ Te he enviado el informe de espionaje por DM. (-${art.coste} pts | Saldo: ${res.saldo} pts)`, ephemeral: true });
+    } catch {
+      darPuntos(user.id, art.coste);
+      await interaction.reply({ content: '⚠️ No pude enviarte un DM. Asegúrate de tener los mensajes directos habilitados.', ephemeral: true });
+    }
+    await registrarCompra(guild, user, art.label, art.coste);
+    return;
+  }
 }
 
-// ─── Acciones sobre la víctima seleccionada ───────────────────────────────────
+// ─── Acciones sobre la víctima seleccionada ──────────────────────────────────
 
-// Devuelve true si la acción tuvo éxito.
 async function ejecutarAccionSobreObjetivo(interaction, accion, objetivo, saldoRestante) {
   const { user, guild } = interaction;
-  const articulo = ARTICULOS[accion];
+  const art = ARTICULOS[accion];
 
   // ── Muteo Chat + Voz 5 min ────────────────────────────────────────────────
   if (accion === 'comprar_muteo') {
     try {
-      const promesas = [
-        objetivo.timeout(5 * 60 * 1000, `Muteo comprado por ${user.tag} en la tienda`),
-      ];
-
-      // Si el objetivo está en un canal de voz, silenciarlo también allí
+      const promesas = [objetivo.timeout(5 * 60 * 1000, `Muteo comprado por ${user.tag}`)];
       const enVoz = !!objetivo.voice?.channel;
-      if (enVoz) {
-        promesas.push(objetivo.voice.setMute(true, `Muteo de voz comprado por ${user.tag}`));
-      }
+      if (enVoz) promesas.push(objetivo.voice.setMute(true, `Muteo voz por ${user.tag}`));
 
       await Promise.all(promesas);
-
       await interaction.reply({
-        content: `🔇 **${objetivo.user}** ha sido muteado **5 minutos** por **${user}**${enVoz ? ' (chat y canal de voz)' : ' (chat)'}. (-${articulo.coste} pts | Saldo: ${saldoRestante} pts)`,
+        content: `🔇 **${objetivo.user}** muteado **5 min** por **${user}**${enVoz ? ' (chat y voz)' : ' (chat)'}. (-${art.coste} pts | Saldo: ${saldoRestante} pts)`,
       });
-
-      // Quitar el mute de voz pasados 5 min (el timeout de chat expira solo)
-      if (enVoz) {
-        setTimeout(async () => {
-          await objetivo.voice.setMute(false).catch(() => {});
-        }, 5 * 60 * 1000);
-      }
-
+      if (enVoz) setTimeout(async () => { await objetivo.voice.setMute(false).catch(() => {}); }, 5 * 60 * 1000);
       return true;
     } catch {
       await interaction.reply({ content: '⚠️ No tengo permisos para mutear a ese usuario.', ephemeral: true });
@@ -411,13 +698,13 @@ async function ejecutarAccionSobreObjetivo(interaction, accion, objetivo, saldoR
   // ── Muteo Chat 10 min ─────────────────────────────────────────────────────
   if (accion === 'comprar_timeout10') {
     try {
-      await objetivo.timeout(10 * 60 * 1000, `Muteo de broma comprado por ${user.tag} en la tienda`);
+      await objetivo.timeout(10 * 60 * 1000, `Muteo 10 min por ${user.tag}`);
       await interaction.reply({
-        content: `⏱️ **${objetivo.user}** ha sido muteado en el chat durante **10 minutos** por **${user}**. (-${articulo.coste} pts | Saldo: ${saldoRestante} pts)`,
+        content: `⏱️ **${objetivo.user}** muteado **10 min** en el chat por **${user}**. (-${art.coste} pts | Saldo: ${saldoRestante} pts)`,
       });
       return true;
     } catch {
-      await interaction.reply({ content: '⚠️ No tengo permisos para aplicar el timeout a ese usuario.', ephemeral: true });
+      await interaction.reply({ content: '⚠️ No tengo permisos para aplicar el timeout.', ephemeral: true });
       return false;
     }
   }
@@ -425,20 +712,15 @@ async function ejecutarAccionSobreObjetivo(interaction, accion, objetivo, saldoR
   // ── Muteo de Voz ──────────────────────────────────────────────────────────
   if (accion === 'comprar_voz') {
     if (!objetivo.voice?.channel) {
-      await interaction.reply({
-        content: `🔕 **${objetivo.user.tag}** no está en ningún canal de voz ahora mismo.`,
-        ephemeral: true,
-      });
+      await interaction.reply({ content: `🔕 **${objetivo.user.tag}** no está en ningún canal de voz.`, ephemeral: true });
       return false;
     }
     try {
-      await objetivo.voice.setDeaf(true, `Muteo de voz comprado por ${user.tag} en la tienda`);
+      await objetivo.voice.setDeaf(true, `Muteo voz por ${user.tag}`);
       await interaction.reply({
-        content: `🔕 **${objetivo.user}** ha sido ensordecido en el canal de voz por **${user}** durante 5 minutos. (-${articulo.coste} pts | Saldo: ${saldoRestante} pts)`,
+        content: `🔕 **${objetivo.user}** ensordecido en voz por **${user}** durante 5 minutos. (-${art.coste} pts | Saldo: ${saldoRestante} pts)`,
       });
-      setTimeout(async () => {
-        await objetivo.voice.setDeaf(false).catch(() => {});
-      }, 5 * 60 * 1000);
+      setTimeout(async () => { await objetivo.voice.setDeaf(false).catch(() => {}); }, 5 * 60 * 1000);
       return true;
     } catch {
       await interaction.reply({ content: '⚠️ No tengo permisos para ensordecer a ese usuario.', ephemeral: true });
@@ -448,33 +730,90 @@ async function ejecutarAccionSobreObjetivo(interaction, accion, objetivo, saldoR
 
   // ── Quitar Aviso ──────────────────────────────────────────────────────────
   if (accion === 'comprar_unwarn') {
-    const avisosAntes = obtenerAvisos(objetivo.id);
-    if (avisosAntes === 0) {
-      await interaction.reply({
-        content: `🧹 **${objetivo.user.tag}** no tiene avisos registrados. No se descontaron puntos.`,
-        ephemeral: true,
-      });
+    const antes = obtenerAvisos(objetivo.id);
+    if (antes === 0) {
+      await interaction.reply({ content: `🧹 **${objetivo.user.tag}** no tiene avisos registrados.`, ephemeral: true });
       return false;
     }
-    const avisosDespues = quitarAviso(objetivo.id);
-
-    // Notificar al canal de staff si existe
+    const despues = quitarAviso(objetivo.id);
     const canalStaff = guild.channels.cache.find(
       (c) => c.isTextBased() && /staff|mod|admin|moderac/i.test(c.name),
     );
     if (canalStaff) {
-      await canalStaff
-        .send(`🧹 **${user.tag}** ha usado 800 puntos para quitar 1 aviso a **${objetivo.user.tag}**. Avisos restantes: **${avisosDespues}**.`)
-        .catch(() => {});
+      await canalStaff.send(`🧹 **${user.tag}** quitó 1 aviso a **${objetivo.user.tag}**. Avisos restantes: **${despues}**.`).catch(() => {});
     }
-
     await interaction.reply({
-      content: `🧹 Se ha quitado **1 aviso** a **${objetivo.user}** (tenía ${avisosAntes}, ahora tiene ${avisosDespues}). (-${articulo.coste} pts | Saldo: ${saldoRestante} pts)`,
+      content: `🧹 Se quitó **1 aviso** a **${objetivo.user}** (tenía ${antes}, ahora tiene ${despues}). (-${art.coste} pts | Saldo: ${saldoRestante} pts)`,
     });
     return true;
   }
 
+  // ── Cambio de Nickname ────────────────────────────────────────────────────
+  if (accion === 'cambio_nick') {
+    const botMember = guild.members.me;
+    if (!botMember.permissions.has(PermissionFlagsBits.ManageNicknames)) {
+      await interaction.reply({ content: '⚠️ No tengo el permiso **Gestionar Apodos** para cambiar nicknames.', ephemeral: true });
+      return false;
+    }
+    const nickAnterior = objetivo.nickname || objetivo.user.username;
+    const nickNuevo    = nicknameAleatorio();
+    try {
+      await objetivo.setNickname(nickNuevo, `Cambio de nick comprado por ${user.tag}`);
+      await interaction.reply({
+        content: `✏️ **${objetivo.user}** ahora se llama **"${nickNuevo}"** durante 1 hora (antes: ${nickAnterior}). (-${art.coste} pts | Saldo: ${saldoRestante} pts)`,
+      });
+      setTimeout(async () => {
+        await objetivo.setNickname(nickAnterior === objetivo.user.username ? null : nickAnterior).catch(() => {});
+      }, 60 * 60 * 1000);
+      return true;
+    } catch {
+      await interaction.reply({ content: '⚠️ No pude cambiar el apodo de ese usuario (puede que su rol sea superior al mío).', ephemeral: true });
+      return false;
+    }
+  }
+
   return false;
+}
+
+// ─── Lotería: sorteo ──────────────────────────────────────────────────────────
+
+async function ejecutarSorteo(guild, canal) {
+  const resultado = realizarSorteo();
+
+  if (!resultado) {
+    await canal?.send('🎰 La lotería se intentó sortear pero **no hay tickets** comprados aún.').catch(() => {});
+    return;
+  }
+
+  const { ganadorId, pozo } = resultado;
+  darPuntos(ganadorId, pozo);
+
+  let ganadorTag = `<@${ganadorId}>`;
+  try {
+    const ganadorMember = await guild.members.fetch(ganadorId);
+    ganadorTag = ganadorMember.user.tag;
+    await ganadorMember.user.send(`🎉 ¡Has ganado la lotería del servidor! **${pozo} puntos** han sido añadidos a tu cuenta.`).catch(() => {});
+  } catch {}
+
+  const embed = new EmbedBuilder()
+    .setTitle('🎰 ¡Sorteo de Lotería!')
+    .setColor(0xf1c40f)
+    .setDescription(`🏆 El ganador es **${ganadorTag}**, que se lleva **${pozo} puntos** del pozo.\n¡El pozo vuelve a cero!`);
+
+  await canal?.send({ embeds: [embed] }).catch(() => {});
+  console.log(`Lotería sorteada: ganador ${ganadorId}, pozo ${pozo} pts`);
+}
+
+// Sorteo automático cada 24 horas
+function iniciarSorteoAutomatico() {
+  setInterval(async () => {
+    for (const guild of client.guilds.cache.values()) {
+      const canal = guild.channels.cache.find((c) => c.isTextBased() && c.name === 'logs-tienda');
+      await ejecutarSorteo(guild, canal);
+    }
+  }, 24 * 60 * 60 * 1000);
+
+  console.log('Sorteo automático de lotería programado cada 24 horas.');
 }
 
 // ─── Inicio ───────────────────────────────────────────────────────────────────
