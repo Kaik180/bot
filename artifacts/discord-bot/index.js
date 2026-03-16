@@ -370,7 +370,44 @@ async function manejarStringSelect(interaction) {
   const sel = interaction.values[0];
 
   if (sel === 'menu_juegos') {
-    await interaction.reply({ content: '🚧 En construcción. ¡Vuelve pronto!', ephemeral: true });
+    const embedJuegos = new EmbedBuilder()
+      .setTitle('🎮 Menú de Juegos')
+      .setColor(0x9b59b6)
+      .setDescription('Usa tus puntos del servidor para jugar y ganar mucho más.')
+      .addFields(
+        {
+          name: '⚔️ Duelos',
+          value: [
+            'Reta a otro usuario a un duelo por puntos.',
+            '• Cada jugador pone la misma apuesta en juego.',
+            '• El bot elige al ganador al azar (50/50).',
+            '• El ganador se lleva **el doble** de lo apostado.',
+            '',
+            '**Cómo usar:** `/duelo @usuario apuesta`',
+            '*El retado tiene 5 minutos para aceptar o rechazar.*',
+          ].join('\n'),
+          inline: false,
+        },
+        {
+          name: '🎰 Lotería Progresiva',
+          value: [
+            'Compra tickets y acumula el pozo para el próximo sorteo.',
+            '• Cada ticket cuesta **100 puntos**.',
+            '• Todos los tickets van al pozo global.',
+            '• Cuantos más tickets tengas, más probabilidades de ganar.',
+            '• El sorteo se realiza automáticamente cada **24 horas**.',
+            '• El ganador se lleva **todo el pozo** acumulado.',
+            '',
+            '**Comandos:**',
+            '`/loteria-comprar [cantidad]` — Compra tickets',
+            '`/loteria-pozo` — Ver el pozo actual y tus tickets',
+          ].join('\n'),
+          inline: false,
+        },
+      )
+      .setFooter({ text: '/estado para ver tus defensas activas • /puntos para ver tu saldo' });
+
+    await interaction.reply({ embeds: [embedJuegos], ephemeral: false });
     return;
   }
   if (sel === 'menu_tienda') {
