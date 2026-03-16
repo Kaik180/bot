@@ -9,8 +9,23 @@ import {
   PermissionFlagsBits,
 } from 'discord.js';
 
-import { obtenerPuntos, darPuntos, quitarPuntos, gastarPuntos } from './economia.js';
-import { buildEmbedTienda, buildBotonesTienda, ARTICULOS } from './tienda.js';
+import {
+  obtenerPuntos,
+  darPuntos,
+  quitarPuntos,
+  gastarPuntos,
+  tienePuntos,
+  obtenerAvisos,
+  quitarAviso,
+} from './economia.js';
+
+import {
+  buildEmbedTienda,
+  buildBotonesTienda,
+  buildSelectorVictima,
+  ARTICULOS,
+} from './tienda.js';
+
 import {
   puedeModerar,
   esInmune,
@@ -40,6 +55,11 @@ const commands = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('avisos')
+    .setDescription('Muestra cuántos avisos tienes registrados')
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('dar-puntos')
     .setDescription('(Admin) Otorga puntos a un usuario')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -64,7 +84,7 @@ const commands = [
     .toJSON(),
 ];
 
-// ─── Registro de comandos en Discord ─────────────────────────────────────────
+// ─── Registro de comandos ─────────────────────────────────────────────────────
 
 const rest = new REST({ version: '10' }).setToken(token);
 
@@ -101,13 +121,14 @@ client.on('messageCreate', (msg) => {
   if (msg.content === '!hola') msg.reply('¡Hola mundo!');
 });
 
-// ─── Interacciones ────────────────────────────────────────────────────────────
+// ─── Router de interacciones ──────────────────────────────────────────────────
 
 client.on('interactionCreate', async (interaction) => {
   try {
-    if (interaction.isChatInputCommand()) await manejarComandoSlash(interaction);
-    else if (interaction.isStringSelectMenu()) await manejarSelectMenu(interaction);
-    else if (interaction.isButton()) await manejarBoton(interaction);
+    if (interaction.isChatInputCommand())  await manejarSlash(interaction);
+    else if (interaction.isStringSelectMenu()) await manejarStringSelect(interaction);
+    else if (interaction.isUserSelectMenu())   await manejarSelectorVictima(interaction);
+    else if (interaction.isButton())           await manejarBoton(interaction);
   } catch (err) {
     console.error('Error en interactionCreate:', err);
     const msg = { content: '❌ Ocurrió un error inesperado. Inténtalo de nuevo.', ephemeral: true };
@@ -118,10 +139,9 @@ client.on('interactionCreate', async (interaction) => {
 
 // ─── Comandos slash ───────────────────────────────────────────────────────────
 
-async function manejarComandoSlash(interaction) {
+async function manejarSlash(interaction) {
   const { commandName } = interaction;
 
-  // /menu
   if (commandName === 'menu') {
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId('menu_principal')
@@ -137,42 +157,41 @@ async function manejarComandoSlash(interaction) {
     return;
   }
 
-  // /puntos
   if (commandName === 'puntos') {
     const pts = obtenerPuntos(interaction.user.id);
+    await interaction.reply({ content: `💰 Tienes **${pts} puntos** del servidor.`, ephemeral: true });
+    return;
+  }
+
+  if (commandName === 'avisos') {
+    const avisos = obtenerAvisos(interaction.user.id);
     await interaction.reply({
-      content: `💰 Tienes **${pts} puntos** del servidor.`,
+      content: `⚠️ Tienes **${avisos} aviso${avisos !== 1 ? 's' : ''}** registrados.`,
       ephemeral: true,
     });
     return;
   }
 
-  // /dar-puntos
   if (commandName === 'dar-puntos') {
     const objetivo = interaction.options.getUser('usuario');
     const cantidad = interaction.options.getInteger('cantidad');
     const nuevo = darPuntos(objetivo.id, cantidad);
-    await interaction.reply({
-      content: `✅ Se han otorgado **${cantidad} puntos** a ${objetivo}. Ahora tiene **${nuevo} puntos**.`,
-    });
+    await interaction.reply({ content: `✅ Se han otorgado **${cantidad} puntos** a ${objetivo}. Ahora tiene **${nuevo} puntos**.` });
     return;
   }
 
-  // /quitar-puntos
   if (commandName === 'quitar-puntos') {
     const objetivo = interaction.options.getUser('usuario');
     const cantidad = interaction.options.getInteger('cantidad');
     const nuevo = quitarPuntos(objetivo.id, cantidad);
-    await interaction.reply({
-      content: `✅ Se han quitado **${cantidad} puntos** a ${objetivo}. Ahora tiene **${nuevo} puntos**.`,
-    });
+    await interaction.reply({ content: `✅ Se han quitado **${cantidad} puntos** a ${objetivo}. Ahora tiene **${nuevo} puntos**.` });
     return;
   }
 }
 
-// ─── Select menu ──────────────────────────────────────────────────────────────
+// ─── Select menu del menú principal ──────────────────────────────────────────
 
-async function manejarSelectMenu(interaction) {
+async function manejarStringSelect(interaction) {
   if (interaction.customId !== 'menu_principal') return;
   const sel = interaction.values[0];
 
@@ -181,182 +200,270 @@ async function manejarSelectMenu(interaction) {
     return;
   }
   if (sel === 'menu_tienda') {
-    await interaction.reply({
-      embeds: [buildEmbedTienda()],
-      components: buildBotonesTienda(),
-    });
+    await interaction.reply({ embeds: [buildEmbedTienda()], components: buildBotonesTienda() });
   }
 }
 
 // ─── Botones de la tienda ─────────────────────────────────────────────────────
 
 async function manejarBoton(interaction) {
-  const { customId, user, member, guild } = interaction;
-  if (!ARTICULOS[customId]) return;
-
+  const { customId, user } = interaction;
   const articulo = ARTICULOS[customId];
-  const botMember = guild.members.me;
+  if (!articulo) return;
 
-  // 1. Verificar puntos
-  const resultado = gastarPuntos(user.id, articulo.coste);
-  if (!resultado.ok) {
+  // Verificar que el comprador tiene suficientes puntos (sin descontar aún)
+  if (!tienePuntos(user.id, articulo.coste)) {
     await interaction.reply({
-      content: `❌ No tienes suficientes puntos. Necesitas **${articulo.coste}** y tienes **${resultado.saldo}**.`,
+      content: `❌ No tienes suficientes puntos. Necesitas **${articulo.coste}** y tienes **${obtenerPuntos(user.id)}**.`,
       ephemeral: true,
     });
     return;
   }
 
-  // 2. Ejecutar la acción de la tienda
-  const exito = await ejecutarAccion(interaction, customId, member, botMember, guild);
-
-  // 3. Si falló, devolver los puntos
-  if (!exito) {
-    darPuntos(user.id, articulo.coste);
+  // Si el artículo necesita elegir víctima → mostrar UserSelectMenu
+  if (articulo.necesitaObjetivo) {
+    await interaction.reply(buildSelectorVictima(customId, user.id));
     return;
   }
 
-  // 4. Registrar la compra en #logs-tienda
-  await registrarCompra(guild, user, articulo.label, articulo.coste);
+  // Si es de auto-aplicación → ejecutar directamente
+  await ejecutarAccionPropia(interaction, customId);
 }
 
-// ─── Lógica de cada artículo ──────────────────────────────────────────────────
+// ─── UserSelectMenu: selección de víctima ────────────────────────────────────
 
-// Devuelve true si la acción se ejecutó con éxito, false si hubo un error.
-async function ejecutarAccion(interaction, customId, member, botMember, guild) {
+async function manejarSelectorVictima(interaction) {
+  // customId tiene formato "victima:{accion}:{compradorId}"
+  const partes = interaction.customId.split(':');
+  if (partes[0] !== 'victima' || partes.length < 3) return;
 
-  // ── Auto-muteo 5 min ───────────────────────────────────────────────────────
-  if (customId === 'comprar_muteo') {
+  const accion      = partes[1];
+  const compradorId = partes[2];
+
+  // ── Seguridad: solo el comprador puede usar este menú ─────────────────────
+  if (interaction.user.id !== compradorId) {
+    await interaction.reply({
+      content: '🔒 Solo la persona que abrió este menú puede usarlo.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const articulo = ARTICULOS[accion];
+  if (!articulo) return;
+
+  // Obtener el miembro objetivo seleccionado
+  const objetivoId = interaction.values[0];
+  const objetivoMember = await interaction.guild.members.fetch(objetivoId).catch(() => null);
+
+  if (!objetivoMember) {
+    await interaction.reply({ content: '❌ No se encontró al usuario seleccionado.', ephemeral: true });
+    return;
+  }
+
+  // ── No permitir seleccionarse a uno mismo en acciones de víctima ──────────
+  if (objetivoId === compradorId) {
+    await interaction.reply({ content: '❌ No puedes seleccionarte a ti mismo como víctima.', ephemeral: true });
+    return;
+  }
+
+  // ── Verificar inmunidad del objetivo ──────────────────────────────────────
+  if (esInmune(objetivoMember)) {
+    await interaction.reply({
+      content: `🛡️ ¡No puedes tocar a **${objetivoMember.user.tag}**, es **Inmune**!`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // ── Verificar jerarquía de roles ──────────────────────────────────────────
+  const botMember = interaction.guild.members.me;
+  const check = puedeModerar(botMember, objetivoMember);
+  if (!check.ok) {
+    await interaction.reply({ content: `⚠️ ${check.razon}`, ephemeral: true });
+    return;
+  }
+
+  // ── Descontar puntos ──────────────────────────────────────────────────────
+  const resultado = gastarPuntos(compradorId, articulo.coste);
+  if (!resultado.ok) {
+    await interaction.reply({
+      content: `❌ Ya no tienes suficientes puntos. Necesitas **${articulo.coste}** y tienes **${resultado.saldo}**.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // ── Ejecutar la acción sobre el objetivo ──────────────────────────────────
+  const exito = await ejecutarAccionSobreObjetivo(
+    interaction, accion, objetivoMember, resultado.saldo,
+  );
+
+  if (!exito) {
+    // Devolver puntos si la acción falló
+    darPuntos(compradorId, articulo.coste);
+    return;
+  }
+
+  // ── Registrar en #logs-tienda ─────────────────────────────────────────────
+  await registrarCompra(
+    interaction.guild,
+    interaction.user,
+    `${articulo.label} → ${objetivoMember.user.tag}`,
+    articulo.coste,
+  );
+}
+
+// ─── Acciones de auto-aplicación (sin objetivo) ──────────────────────────────
+
+async function ejecutarAccionPropia(interaction, accion) {
+  const { user, member, guild } = interaction;
+  const articulo = ARTICULOS[accion];
+  const botMember = guild.members.me;
+
+  // ── Auto-muteo 5 min ──────────────────────────────────────────────────────
+  if (accion === 'comprar_muteo') {
     if (esInmune(member)) {
       await interaction.reply({ content: '🛡️ Tienes el rol **Inmune**, ¡el muteo no te afecta!', ephemeral: true });
-      return false;
+      return;
     }
     const check = puedeModerar(botMember, member);
-    if (!check.ok) {
-      await interaction.reply({ content: `⚠️ ${check.razon}`, ephemeral: true });
-      return false;
+    if (!check.ok) { await interaction.reply({ content: `⚠️ ${check.razon}`, ephemeral: true }); return; }
+
+    const res = gastarPuntos(user.id, articulo.coste);
+    if (!res.ok) {
+      await interaction.reply({ content: `❌ No tienes suficientes puntos. Necesitas **${articulo.coste}** y tienes **${res.saldo}**.`, ephemeral: true });
+      return;
     }
     try {
       await member.timeout(5 * 60 * 1000, 'Auto-muteo comprado en la tienda');
-      await interaction.reply({
-        content: `🔇 **${interaction.user}** se ha muteado durante **5 minutos**. (-500 pts | Saldo: ${obtenerPuntos(interaction.user.id)} pts)`,
-      });
-      return true;
+      await interaction.reply({ content: `🔇 **${user}** se ha muteado **5 minutos**. (-${articulo.coste} pts | Saldo: ${res.saldo} pts)` });
+      await registrarCompra(guild, user, articulo.label, articulo.coste);
     } catch {
+      darPuntos(user.id, articulo.coste);
       await interaction.reply({ content: '⚠️ No tengo permisos para aplicar el timeout.', ephemeral: true });
-      return false;
     }
+    return;
   }
 
-  // ── Timeout Chat 10 min ────────────────────────────────────────────────────
-  if (customId === 'comprar_timeout10') {
-    if (esInmune(member)) {
-      await interaction.reply({ content: '🛡️ Tienes el rol **Inmune**, ¡el muteo no te afecta!', ephemeral: true });
-      return false;
-    }
-    const check = puedeModerar(botMember, member);
-    if (!check.ok) {
-      await interaction.reply({ content: `⚠️ ${check.razon}`, ephemeral: true });
-      return false;
+  // ── Rol VIP 1 hora ────────────────────────────────────────────────────────
+  if (accion === 'comprar_vip') {
+    const res = gastarPuntos(user.id, articulo.coste);
+    if (!res.ok) {
+      await interaction.reply({ content: `❌ No tienes suficientes puntos. Necesitas **${articulo.coste}** y tienes **${res.saldo}**.`, ephemeral: true });
+      return;
     }
     try {
-      await member.timeout(10 * 60 * 1000, 'Timeout 10 min comprado en la tienda');
+      const rolVip = await buscarOCrearRol(guild, 'VIP', { color: 0xf1c40f });
+      await member.roles.add(rolVip);
+      await interaction.reply({ content: `👑 **${user}** ahora tiene el rol **VIP** durante 1 hora. (-${articulo.coste} pts | Saldo: ${res.saldo} pts)` });
+      await registrarCompra(guild, user, articulo.label, articulo.coste);
+      setTimeout(async () => {
+        await member.roles.remove(rolVip).catch(() => {});
+        await user.send('⏰ Tu rol **VIP** ha expirado.').catch(() => {});
+      }, 60 * 60 * 1000);
+    } catch {
+      darPuntos(user.id, articulo.coste);
+      await interaction.reply({ content: '⚠️ No tengo permisos para crear o asignar el rol VIP.', ephemeral: true });
+    }
+    return;
+  }
+
+  // ── Inmunidad 24 horas ────────────────────────────────────────────────────
+  if (accion === 'comprar_inmunidad') {
+    const res = gastarPuntos(user.id, articulo.coste);
+    if (!res.ok) {
+      await interaction.reply({ content: `❌ No tienes suficientes puntos. Necesitas **${articulo.coste}** y tienes **${res.saldo}**.`, ephemeral: true });
+      return;
+    }
+    try {
+      const rolInmune = await buscarOCrearRol(guild, 'Inmune', { color: 0x2ecc71 });
+      await member.roles.add(rolInmune);
+      await interaction.reply({ content: `🛡️ **${user}** tiene el rol **Inmune** durante 24 horas. Nadie podrá mutearte con el bot. (-${articulo.coste} pts | Saldo: ${res.saldo} pts)` });
+      await registrarCompra(guild, user, articulo.label, articulo.coste);
+      setTimeout(async () => {
+        await member.roles.remove(rolInmune).catch(() => {});
+        await user.send('⏰ Tu rol **Inmune** ha expirado.').catch(() => {});
+      }, 24 * 60 * 60 * 1000);
+    } catch {
+      darPuntos(user.id, articulo.coste);
+      await interaction.reply({ content: '⚠️ No tengo permisos para crear o asignar el rol Inmune.', ephemeral: true });
+    }
+    return;
+  }
+}
+
+// ─── Acciones sobre la víctima seleccionada ───────────────────────────────────
+
+// Devuelve true si la acción tuvo éxito.
+async function ejecutarAccionSobreObjetivo(interaction, accion, objetivo, saldoRestante) {
+  const { user, guild } = interaction;
+  const articulo = ARTICULOS[accion];
+
+  // ── Muteo Chat 10 min ─────────────────────────────────────────────────────
+  if (accion === 'comprar_timeout10') {
+    try {
+      await objetivo.timeout(10 * 60 * 1000, `Muteo de broma comprado por ${user.tag} en la tienda`);
       await interaction.reply({
-        content: `⏱️ **${interaction.user}** se ha aplicado un timeout de **10 minutos** en el chat. (-600 pts | Saldo: ${obtenerPuntos(interaction.user.id)} pts)`,
+        content: `⏱️ **${objetivo.user}** ha sido muteado en el chat durante **10 minutos** por **${user}**. (-${articulo.coste} pts | Saldo: ${saldoRestante} pts)`,
       });
       return true;
     } catch {
-      await interaction.reply({ content: '⚠️ No tengo permisos para aplicar el timeout.', ephemeral: true });
+      await interaction.reply({ content: '⚠️ No tengo permisos para aplicar el timeout a ese usuario.', ephemeral: true });
       return false;
     }
   }
 
-  // ── Muteo de Voz ───────────────────────────────────────────────────────────
-  if (customId === 'comprar_voz') {
-    const voiceState = member.voice;
-    if (!voiceState?.channel) {
+  // ── Muteo de Voz ──────────────────────────────────────────────────────────
+  if (accion === 'comprar_voz') {
+    if (!objetivo.voice?.channel) {
       await interaction.reply({
-        content: '🔕 Debes estar en un canal de voz para usar este artículo.',
+        content: `🔕 **${objetivo.user.tag}** no está en ningún canal de voz ahora mismo.`,
         ephemeral: true,
       });
       return false;
     }
-    const check = puedeModerar(botMember, member);
-    if (!check.ok) {
-      await interaction.reply({ content: `⚠️ ${check.razon}`, ephemeral: true });
-      return false;
-    }
     try {
-      await member.voice.setDeaf(true, 'Muteo de voz comprado en la tienda');
+      await objetivo.voice.setDeaf(true, `Muteo de voz comprado por ${user.tag} en la tienda`);
       await interaction.reply({
-        content: `🔕 **${interaction.user}** ha sido ensordecido en el canal de voz. (-500 pts | Saldo: ${obtenerPuntos(interaction.user.id)} pts)`,
+        content: `🔕 **${objetivo.user}** ha sido ensordecido en el canal de voz por **${user}** durante 5 minutos. (-${articulo.coste} pts | Saldo: ${saldoRestante} pts)`,
       });
-      // Quitar la sordera tras 5 minutos
       setTimeout(async () => {
-        await member.voice.setDeaf(false).catch(() => {});
+        await objetivo.voice.setDeaf(false).catch(() => {});
       }, 5 * 60 * 1000);
       return true;
     } catch {
-      await interaction.reply({ content: '⚠️ No tengo permisos para ensordecer en el canal de voz.', ephemeral: true });
+      await interaction.reply({ content: '⚠️ No tengo permisos para ensordecer a ese usuario.', ephemeral: true });
       return false;
     }
   }
 
-  // ── Quitar Aviso (Unwarn) ──────────────────────────────────────────────────
-  if (customId === 'comprar_unwarn') {
-    // Notifica al staff buscando un canal con "staff", "mod" o "admin" en el nombre
+  // ── Quitar Aviso ──────────────────────────────────────────────────────────
+  if (accion === 'comprar_unwarn') {
+    const avisosAntes = obtenerAvisos(objetivo.id);
+    if (avisosAntes === 0) {
+      await interaction.reply({
+        content: `🧹 **${objetivo.user.tag}** no tiene avisos registrados. No se descontaron puntos.`,
+        ephemeral: true,
+      });
+      return false;
+    }
+    const avisosDespues = quitarAviso(objetivo.id);
+
+    // Notificar al canal de staff si existe
     const canalStaff = guild.channels.cache.find(
       (c) => c.isTextBased() && /staff|mod|admin|moderac/i.test(c.name),
     );
     if (canalStaff) {
-      await canalStaff.send(
-        `🧹 **${interaction.user.tag}** ha solicitado la revisión de una advertencia usando 800 puntos de la tienda. Por favor revisar el historial de advertencias.`,
-      );
+      await canalStaff
+        .send(`🧹 **${user.tag}** ha usado 800 puntos para quitar 1 aviso a **${objetivo.user.tag}**. Avisos restantes: **${avisosDespues}**.`)
+        .catch(() => {});
     }
+
     await interaction.reply({
-      content: canalStaff
-        ? `🧹 Tu solicitud de revisión de aviso ha sido enviada al staff en ${canalStaff}. (-800 pts | Saldo: ${obtenerPuntos(interaction.user.id)} pts)`
-        : '🧹 Solicitud registrada. No encontré un canal de staff, pero el log ha sido guardado. (-800 pts)',
+      content: `🧹 Se ha quitado **1 aviso** a **${objetivo.user}** (tenía ${avisosAntes}, ahora tiene ${avisosDespues}). (-${articulo.coste} pts | Saldo: ${saldoRestante} pts)`,
     });
     return true;
-  }
-
-  // ── Rol VIP 1 hora ─────────────────────────────────────────────────────────
-  if (customId === 'comprar_vip') {
-    try {
-      const rolVip = await buscarOCrearRol(guild, 'VIP', { color: 0xf1c40f });
-      await member.roles.add(rolVip);
-      await interaction.reply({
-        content: `👑 **${interaction.user}** ahora tiene el rol **VIP** durante 1 hora. (-1000 pts | Saldo: ${obtenerPuntos(interaction.user.id)} pts)`,
-      });
-      setTimeout(async () => {
-        await member.roles.remove(rolVip).catch(() => {});
-        await interaction.user.send('⏰ Tu rol **VIP** ha expirado.').catch(() => {});
-      }, 60 * 60 * 1000);
-      return true;
-    } catch {
-      await interaction.reply({ content: '⚠️ No tengo permisos para crear o asignar el rol VIP.', ephemeral: true });
-      return false;
-    }
-  }
-
-  // ── Inmunidad 24 horas ─────────────────────────────────────────────────────
-  if (customId === 'comprar_inmunidad') {
-    try {
-      const rolInmune = await buscarOCrearRol(guild, 'Inmune', { color: 0x2ecc71 });
-      await member.roles.add(rolInmune);
-      await interaction.reply({
-        content: `🛡️ **${interaction.user}** ahora tiene el rol **Inmune** durante 24 horas. ¡Los comandos de muteo del bot no te afectarán! (-2000 pts | Saldo: ${obtenerPuntos(interaction.user.id)} pts)`,
-      });
-      setTimeout(async () => {
-        await member.roles.remove(rolInmune).catch(() => {});
-        await interaction.user.send('⏰ Tu rol **Inmune** ha expirado.').catch(() => {});
-      }, 24 * 60 * 60 * 1000);
-      return true;
-    } catch {
-      await interaction.reply({ content: '⚠️ No tengo permisos para crear o asignar el rol Inmune.', ephemeral: true });
-      return false;
-    }
   }
 
   return false;

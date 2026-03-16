@@ -3,8 +3,11 @@ import {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  UserSelectMenuBuilder,
 } from 'discord.js';
 
+// necesitaObjetivo: true  → el artículo se aplica a OTRO usuario (muestra UserSelectMenu)
+// necesitaObjetivo: false → se aplica al propio comprador (ejecuta directo)
 export const ARTICULOS = {
   comprar_muteo: {
     label: 'Auto-muteo 5 min',
@@ -12,27 +15,31 @@ export const ARTICULOS = {
     coste: 500,
     descripcion: 'Te muteas a ti mismo durante 5 minutos',
     style: ButtonStyle.Primary,
+    necesitaObjetivo: false,
   },
   comprar_timeout10: {
     label: 'Muteo Chat 10 min',
     emoji: '⏱️',
     coste: 600,
-    descripcion: 'Te aplicas un timeout de 10 minutos en el chat',
+    descripcion: 'Aplica un timeout de 10 min a la víctima que elijas',
     style: ButtonStyle.Primary,
+    necesitaObjetivo: true,
   },
   comprar_voz: {
     label: 'Muteo de Voz',
     emoji: '🔕',
     coste: 500,
-    descripcion: 'Te ensordece en el canal de voz si estás conectado',
+    descripcion: 'Ensordece en voz a la víctima que elijas',
     style: ButtonStyle.Secondary,
+    necesitaObjetivo: true,
   },
   comprar_unwarn: {
     label: 'Quitar Aviso',
     emoji: '🧹',
     coste: 800,
-    descripcion: 'Notifica al staff para revisar una advertencia tuya',
+    descripcion: 'Resta un aviso a otro usuario de la base de datos',
     style: ButtonStyle.Secondary,
+    necesitaObjetivo: true,
   },
   comprar_vip: {
     label: 'Rol VIP 1h',
@@ -40,16 +47,19 @@ export const ARTICULOS = {
     coste: 1000,
     descripcion: 'Obtén el rol VIP durante 1 hora',
     style: ButtonStyle.Success,
+    necesitaObjetivo: false,
   },
   comprar_inmunidad: {
     label: 'Inmunidad 24h',
     emoji: '🛡️',
     coste: 2000,
-    descripcion: 'El bot no podrá mutearte durante 24 horas',
+    descripcion: 'Nadie podrá mutearte con el bot durante 24 horas',
     style: ButtonStyle.Danger,
+    necesitaObjetivo: false,
   },
 };
 
+// Devuelve el embed de la tienda
 export function buildEmbedTienda() {
   const campos = Object.entries(ARTICULOS).map(([, art]) => ({
     name: `${art.emoji} ${art.label}`,
@@ -65,22 +75,36 @@ export function buildEmbedTienda() {
     .setFooter({ text: 'Usa /puntos para ver tu saldo • /dar-puntos para recibir puntos (admin)' });
 }
 
+// Devuelve las filas de botones de la tienda
 export function buildBotonesTienda() {
-  // Fila 1: acciones de muteo / moderación
   const fila1 = new ActionRowBuilder().addComponents(
     btn('comprar_muteo'),
     btn('comprar_timeout10'),
     btn('comprar_voz'),
     btn('comprar_unwarn'),
   );
-
-  // Fila 2: roles especiales
   const fila2 = new ActionRowBuilder().addComponents(
     btn('comprar_vip'),
     btn('comprar_inmunidad'),
   );
-
   return [fila1, fila2];
+}
+
+// Devuelve el UserSelectMenu para elegir víctima
+// customId: "victima:{accion}:{compradorId}"
+export function buildSelectorVictima(accion, compradorId) {
+  const art = ARTICULOS[accion];
+  const selectMenu = new UserSelectMenuBuilder()
+    .setCustomId(`victima:${accion}:${compradorId}`)
+    .setPlaceholder('Selecciona a tu víctima...')
+    .setMinValues(1)
+    .setMaxValues(1);
+
+  return {
+    content: `${art.emoji} **${art.label}** — Selecciona a la víctima de tu compra:`,
+    components: [new ActionRowBuilder().addComponents(selectMenu)],
+    ephemeral: true,
+  };
 }
 
 function btn(id) {
