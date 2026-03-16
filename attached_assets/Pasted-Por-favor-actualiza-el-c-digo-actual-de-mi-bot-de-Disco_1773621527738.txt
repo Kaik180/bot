@@ -1,0 +1,31 @@
+Por favor, actualiza el código actual de mi bot de Discord (Node.js con discord.js v14) para implementar un sistema de menús interactivos y una tienda virtual básica.
+
+Sigue estas instrucciones detalladas:
+
+1. Nuevo Comando de Menú Principal:
+   - Crea un comando de chat llamado `/menu`.
+   - Este comando debe responder con un mensaje que contenga un "String Select Menu" (menú desplegable).
+   - El menú desplegable debe tener dos opciones:
+     * Opción 1: Label: "Menú de Juegos", Value: "menu_juegos", Description: "Ver los juegos disponibles (Próximamente)".
+     * Opción 2: Label: "Tienda del Servidor", Value: "menu_tienda", Description: "Usa tus puntos para comprar acciones".
+
+2. Manejo de Interacciones (Select Menu):
+   - Configura el bot para escuchar las interacciones del menú desplegable (`interaction.isStringSelectMenu()`).
+   - Si el usuario selecciona "menu_juegos", responde con un mensaje efímero (solo lo ve él) que diga: "Este menú está en construcción. ¡Vuelve pronto!".
+   - Si el usuario selecciona "menu_tienda", responde con un nuevo mensaje interactivo que muestre la tienda (ver punto 3).
+
+3. La Tienda del Servidor (Sistema de Botones):
+   - El mensaje de la tienda debe listar artículos ficticios que se pueden comprar con "Puntos del Servidor" (NO dinero real).
+   - Añade Botones (ButtonBuilder) debajo del mensaje para cada artículo.
+   - Ejemplo de artículos/botones:
+     * Artículo 1: "Muteo de broma (5 min)". Coste: 500 puntos. Botón con ID `comprar_muteo`.
+     * Artículo 2: "Rol VIP temporal (1 hora)". Coste: 1000 puntos. Botón con ID `comprar_vip`.
+
+4. Manejo de Compras (Botones):
+   - Configura el bot para escuchar las interacciones de los botones (`interaction.isButton()`).
+   - Cuando se pulse un botón (ej. `comprar_muteo`):
+     * Por ahora, NO implementes la lógica de simular puntos ni la acción real de mutear.
+     * Simplemente responde con un mensaje efímero que diga: "⚠️ Intento de compra detectado. No tienes suficientes Puntos del Servidor para este artículo." (Esto sirve de marcador de posición para la lógica futura).
+
+5. Estructura del Código:
+   - Mantén el código organizado y asegúrate de que use las clases correctas de discord.js v14 (ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, etc.).
