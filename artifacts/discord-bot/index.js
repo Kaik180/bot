@@ -225,6 +225,7 @@ client.on('interactionCreate', async (interaction) => {
 
         return await interaction.reply({ embeds: [embedGuia] });
     }
+
 // ─── Comandos slash ───────────────────────────────────────────────────────────
 
 async function manejarSlash(interaction) {
