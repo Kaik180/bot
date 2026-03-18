@@ -195,6 +195,36 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
+// --- Comando Guía ---
+    if (commandName === 'guia') {
+        const embedGuia = new EmbedBuilder()
+            .setTitle('💎 GUÍA DE ECONOMÍA ELITE')
+            .setColor(0xD4AF37) 
+            .setThumbnail(interaction.guild.iconURL())
+            .setDescription('Bienvenido al sistema de economía más exclusivo. Los puntos son un recurso de lujo y difícil obtención.')
+            .addFields(
+                { 
+                    name: '🏆 ¿Cómo conseguir puntos?', 
+                    value: '• Participando en **Eventos Especiales**.\n• Recompensas por ver **Streams oficiales**.\n• Apoyando al servidor con **Packs Premium**.' 
+                },
+                { 
+                    name: '📦 PACKS DE PUNTOS PREMIUM', 
+                    value: 
+                    '**• Pack Bronce:** 2.000 pts — **5€**\n' +
+                    '**• Pack Plata:** 5.000 pts — **15€**\n' +
+                    '**• Pack Oro:** 15.000 pts — **40€**\n' +
+                    '**• Pack Divino:** 40.000 pts — **100€**' 
+                },
+                { 
+                    name: '💳 ¿Cómo comprar?', 
+                    value: 'Abre un ticket en el canal de soporte o contacta con un Administrador.' 
+                }
+            )
+            .setFooter({ text: 'Estos precios apoyan directamente el mantenimiento del servidor.' })
+            .setTimestamp();
+
+        return await interaction.reply({ embeds: [embedGuia] });
+    }
 // ─── Comandos slash ───────────────────────────────────────────────────────────
 
 async function manejarSlash(interaction) {
